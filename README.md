@@ -5,6 +5,7 @@ This repo contains code and data for forecasting the US 2020 presidential electi
 Inputs contain data that are unchanged from their original. We use two datasets: 
 
 - Survey data (https://www.voterstudygroup.org/publication/nationscape-data-set)
+
   The national survey data chiefly used in the analysis is from Democracy Fund + UCLA Nationscape, one of the largest public opinion survey projects ever conducted. It  interviewed people in nearly every county, congressional district, and mid-sized U.S. city in the leadup to the 2020 election.
 We use data collected in phrase 2 from June 25 to July 01, 2020 (N = 6,479 US Adults).
 
