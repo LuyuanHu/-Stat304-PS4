@@ -1,0 +1,367 @@
+---
+title: "Predicting 2020 State Presidential Election Results with a National Tracking Poll and MRP"
+#subtitle: "TBD"
+author: "Luyuan Hu, Jiayi Wang, Linwei Yao & Bihan Lu"
+thanks: "Code and data are available at: https://github.com/LuyuanHu/-Stat304-PS4;  https://ipums.org/projects/ipums-usa; https://www.voterstudygroup.org/publication/nationscape-data-set."
+
+# date: "`r format(Sys.time(), '%d %B %Y')`"
+abstract: |
+  | This study utilizes public opinion survey data before the 2020 general election, and USES multi level Regression and Poststratification (MRP) estimation model to predict the election results of different regions.Specifically, the prediction model used in this paper consists of three steps. First, it estimates the probability that different types of voters will support Donald Trump and Joe Biden, respectively, through basic demographic variables (gender, age, and education level) supplemented by characteristics at the district level.Secondly, we used national census data to obtain the joint probability distribution of different types of voters in each constituency.Finally, the total number of adults voting for Donald Trump and Joe Biden in each district was calculated by dividing each district's total annual population by the total number of adults voting for Donald Trump and Joe Biden.
+output:
+  bookdown::pdf_document2:
+toc: FALSE
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(palmerpenguins)
+```
+
+# Introduction
+
+One of the most fascinating aspects of election research is election prediction.Regardless of the size of the election, the pre-election focus is always on who will win and who will win.The uncertainty of the election also attracts many experts and scholars to build various election prediction models by using the data of the population or individuals.These prediction models not only examine relevant election theories, but also contribute a lot to the practice of election operation.
+This model of election prediction, based on individual polling data, is fairly common, has been studied around the world, and is, by and large, accurate.
+
+The model consists of two parts: first, the national population is divided into different segments, and a small sample of national individuals is used to estimate the voting intention of each segment of the population, supplemented by regional characteristics.Secondly, the distribution of population strata in each region (or sub-level) is obtained in accordance with the census data to predict the behavior and attitude of each region or sub-level, such as the vote share of each county and city in the country.The core advantages of this model can be summarized as the following three points:
+
+Secondly, the distribution of population strata in each region (or sub-level) is obtained in accordance with the census data to predict the behavior and attitude of each region or sub-level, such as the vote share of each state in the country.The core advantages of this model can be summarized as the following three points:
+The model first USES the human location variable and the actual observed values of the country to form a statistical regression model, and then the estimated values of the public opinion of the state and the city can be obtained according to the census data.Since the regression coefficients of the model are based ona national sample, not by region, the approach takes into account the national "voting trends" at the time of the election and USES information from other counties to assist in obtaining estimates for a particular state.Such an analytical framework is in line with the electoral context, in which each district has its own candidate or regional factors, but national factors still have some influence.
+
+# Data
+
+
+The national survey data chiefly used in the analysis is from Democracy Fund + UCLA Nationscape, one of the largest public opinion survey projects ever conducted. It  interviewed people in nearly every county, congressional district, and mid-sized U.S. city in the leadup to the 2020 election.
+We use data collected in phrase 2 from June 25 to July 01, 2020 (N = 6,479 US Adults).
+Figure \@ref(fig:fig1) plots the sample size by state, ranging from 5 respondents in Wyoming to 717 in California, with the median state (Los Angeles) including 81 respondents.
+
+```{r include=FALSE}
+library(haven)
+library(tidyverse)
+library(foreign)
+library(mice)
+library(e1071)
+# Read in the raw data (You might need to change this if you use a different dataset)
+raw_data1 <- read_dta("data/ns20200625.dta")
+# Add the labels
+raw_data1 <- labelled::to_factor(raw_data1)
+# Just keep some variables
+reduced_data1 <- 
+  raw_data1 %>% 
+  select(interest,
+         registration,
+         vote_2016,
+         vote_intention,
+         vote_2020,
+         ideo5,
+         employment,
+         foreign_born,
+         gender,
+         census_region,
+         hispanic,
+         race_ethnicity,
+         household_income,
+         education,
+         state,
+         congress_district,
+         age)
+
+#### Clean up ####
+
+
+
+reduced_data1 <- reduced_data1 %>% 
+  mutate(Trump = ifelse(vote_2020=="Donald Trump", 1, 0)) 
+
+reduced_data1 <- reduced_data1 %>% 
+  mutate(Biden = ifelse(vote_2020=="Joe Biden", 1, 0)) 
+
+reduced_data1 <- reduced_data1 %>% 
+  mutate(hispan = ifelse(hispanic=="Not Hispanic", 0, 1)) 
+
+reduced_data1 <- reduced_data1 %>% 
+  mutate(whiteshare = ifelse(race_ethnicity=="White", 1, 0)) 
+
+reduced_data1 <- reduced_data1 %>% 
+  mutate(blackshare = ifelse(race_ethnicity=="Black, or African American", 1, 0)) 
+
+
+cces <- reduced_data1 %>%
+  mutate(
+         agegroup = ifelse(age >= 18 & age <= 29, "18-29",
+                           ifelse(age >= 30 & age <= 44, "30-44",
+                                  ifelse(age >= 45 & age <= 54, "45-54",
+                                         ifelse(age >= 55 & age <= 64, "55-64",
+                                                ifelse(age >= 65, "65+", NA))))),
+         age.2 = ifelse(age >= 18 & age <= 44, "18-44",
+                        ifelse(age >= 45, "45+", NA)),
+         educ6 = ifelse(education == "No HS", "Non-High School Graduate",
+                        ifelse(education == "High school graduate" |education == "Completed some high school", "High School Graduate",
+                               ifelse(education == "Some college"|education == "Completed some college, but no degree"|education=="Associate Degree", "Some College",
+                                      ifelse(education == "College Degree (such as B.A., B.S.)", "College Degree",
+                                             ifelse(education == "Masters degree", "Masters degree",
+                                                    ifelse(education == "Doctorate degree", "Doctorate degree", NA)))))))
+
+cces <- cces %>%
+  mutate(ideo5.pre = ifelse(ideo5 == "Not sure", NA, 
+                            ifelse(ideo5 == "Very liberal", "Very liberal",
+                                   ifelse(ideo5 == "Liberal", "Liberal",
+                                          ifelse(ideo5 == "Moderate", "Moderate",
+                                                 ifelse(ideo5 == "Conservative", "Conservative",
+                                                        ifelse(ideo5 == "Very conservative", "Very conservative", NA)))))),
+         ideo5.pre.r = ifelse(ideo5 == "Not sure" , NA, 
+                              ifelse(ideo5 == "Very liberal", 1,
+                                     ifelse(ideo5 == "Liberal", 2,
+                                            ifelse(ideo5 == "Moderate", 3,
+                                                   ifelse(ideo5 == "Conservative", 4,
+                                                          ifelse(ideo5 == "Very conservative", 5, NA)))))),
+         ideo3.pre = ifelse(ideo5.pre == "Very liberal" | ideo5.pre == "Liberal", "Liberal",
+                            ifelse(ideo5.pre == "Very conservative" | ideo5.pre == "Conservative", "Conservative",
+                                   ifelse(ideo5.pre == "Moderate", "Moderate", NA))))
+
+
+
+# MUTATE: income & retire ------
+cces <- cces %>%
+  mutate(income.6 = ifelse(household_income == "Less than $14,999" | household_income == "$15,000 to $19,999" | household_income == "$20,000 to $24,999"|household_income == "$25,000 to $29,999", "$30k>",
+                           ifelse(household_income == "$30,000 to $34,999" | household_income == "$35,000 to $39,999"|household_income == "$40,000 to $44,999" | household_income == "$45,000 to $49,999", "$30k-50k",
+                                  ifelse(household_income == "$50,000 to $54,999" | household_income == "$55,000 to $59,999"|household_income == "$60,000 to $64,999" | household_income == "$65,000 to $69,999", "$50k-70k",
+                                         ifelse(household_income == "$70,000 to 74,999" | household_income == "$75,000 to $79,999"|household_income == "$80,000 to $84,999" | household_income == "$85,000 to $89,999"|household_income == "$90,000 to $94,999" | household_income == "$95,000 to $99,999", "$70k-100k",
+                                                ifelse(household_income == "$100,000 to $124,999" | household_income == "$125,000 to $149,999" | household_income == "$150,000 to $174,999"| household_income ==  "$175,000 to $199,999", "$100k-200k",
+                                                       ifelse(household_income == "$200,000 - $249,999" | household_income == "$250,000 or above", "$200k<", NA)))))),
+         retired = ifelse(employment == "Retired", 1,0),
+         labor_force = ifelse(employment == "Full-time employed"|employment == "Self-employed"|employment =="Part-time employed","in the labor force","not in the labor force")
+  )
+
+cces <- cces %>%
+  mutate(
+    race3 = ifelse(race_ethnicity == "White", "White",
+                   ifelse(race_ethnicity == "Black, or African American", "Black", "Other")),
+    vote.2 = ifelse(vote_2020=="Donald Trump", "Trump",
+                                  ifelse(vote_2020=="Joe Biden", "Biden", NA)))
+
+
+survey <- cces %>%
+  select(vote.2,
+         race3,
+         agegroup,
+         gender,
+         income.6,
+         educ6,
+         census_region,
+         labor_force
+         )
+
+survey.na_omit <- survey %>% na.omit()
+```
+
+
+As noted, for the turnout models, respondents were classified as voters if they (1)
+reported being registered to vote at their current address, (2) said they definitely would vote or
+already had voted and (3) said they voted in the 2016 election (n=5,656). 
+Candidate preference questions were asked only of respondents who said they had voted or definitely would vote
+(n=5,170). Of these, those who said they preferred/voted for Donald Trump were coded as 1 for the
+Vote Donald Trump variable (n=2,481), with all others (supporters of Joe Biden, third-party candidates and
+undecideds) coded as 0. Similarly, for the Vote Joe Biden variable, Biden early voters and
+supporters were coded 1 (n=2,719) and all others 0.
+
+
+```{r fig1,  fig.width=6,fig.height=3,fig.cap="Sample size per state", echo = FALSE}
+x <- as.data.frame(sort(table(reduced_data1$state)))
+p <- ggplot(data = x, mapping = aes(
+  x = fct_reorder(Var1 , Freq), y = Freq ))
+p + geom_point() +
+  coord_flip()
+```
+
+Demographic group variables included as random effects were gender (male, female),
+age (18-29, 30-39, 40-49, 50-64, 65+), race/ethnicity (white non-Hispanic, black non-Hispanic,
+Hispanic, and other non-Hispanic),8 and education (less than high school, high school graduate,
+some college, four-year college graduate, post-graduate). 
+
+
+IPUMS USA (originally, the "Integrated Public Use Microdata Series") is a website and database providing access to over sixty integrated, high-precision samples of the American population drawn from sixteen federal censuses, from the American Community Surveys of 2000-present, and from the Puerto Rican Community Surveys of 2005-present.
+For estimates of uncertainty, MRP models can be estimated with full Bayesian methods;
+this analyses uses a more approximate maximum likelihood estimator since the focus is on point
+estimates. Models were estimated in `R` using the `naiveBayes` function in the `e1071` package[@e1071] and the glmer function in the `lme4` package[@lme4].
+
+
+```{r include=FALSE}
+raw_data <- read_dta("data/usa_00004.dta")                     
+# Add the labels
+raw_data <- labelled::to_factor(raw_data)
+
+# Just keep some variables that may be of interest (change 
+# this depending on your interests)
+names(raw_data)
+
+reduced_data <- 
+  raw_data %>% 
+  select(
+         sex, 
+         age, 
+         race, 
+         hispan,
+         educd,
+         region,
+         labforce,
+         ftotinc)
+
+
+
+reduced_data[which(as.integer(reduced_data$age) < 18),] <- NA
+
+reduced_data <- reduced_data %>% na.omit()
+
+reduced_data <- reduced_data %>% 
+  mutate(gender = ifelse(sex=="male", "Male", "Female"),
+         agegroup = ifelse(as.integer(age) >= 18 & as.integer(age) <= 29, "18-29",
+                           ifelse(as.integer(age) >= 30 & as.integer(age) <= 44, "30-44",
+                                  ifelse(as.integer(age) >= 45 & as.integer(age) <= 54, "45-54",
+                                         ifelse(as.integer(age) >= 55 & as.integer(age) <= 64, "55-64",
+                                                ifelse(as.integer(age) >= 65, "65+", NA))))),
+         educ6 =          ifelse(educd == "some college, but less than 1 year"|educd == "associate's degree, type not specified", "Some College",
+                               ifelse(educd == "regular high school diploma", "High School Graduate",
+                                      ifelse(educd == "professional degree beyond a bachelor's degree", "College Degree",
+                                             ifelse(educd ==  "master's degree", "Masters degree",
+                                                    ifelse(educd == "doctoral degree", "Doctorate degree", "Non-High School Graduate"))))),
+         census_region = ifelse(region=="east north central div", "Northeast",
+                                ifelse(region=="west north central div", "Midwest",
+                                       ifelse(region == "south atlantic division"| region=="east south central div", "South",
+                                              ifelse(region=="west south central div", "West", NA)))),
+         labor_force = ifelse(labforce == "yes, in the labor force", "in the labor force",
+                           ifelse(labforce == "no, not in the labor force", "not in the labor force", NA)),
+         
+         income.6 = ifelse(as.integer(ftotinc) < 30000, "$30k>",
+                           ifelse(as.integer(ftotinc) < 50000, "$30k-50k",
+                                  ifelse(as.integer(ftotinc) < 70000, "$50k-70k",
+                                         ifelse(as.integer(ftotinc) < 100000, "$70k-100k",
+                                                ifelse(as.integer(ftotinc)> 100000, "$100k<", NA))))),
+         race3 = ifelse(as.integer(race) == 1, "White",
+                        ifelse(as.integer(race) == 2, "Black", "Other"))
+         )
+
+
+
+post_stra <- reduced_data %>%
+  select(
+         race3,
+         agegroup,
+         gender,
+         income.6,
+         educ6,
+         census_region,
+         labor_force
+  )
+
+```
+
+
+
+# Model
+
+In this section, we will use MRP for state-level estimate.
+National-level surveys proved at least as accurate in 2016 as they have been in past
+elections – only slightly misstating the popular vote (overestimating Clinton’s victory over
+Trump by 1-2 points), and more accurate on average than in 2012 ([@silver2017real]; [@cohn2016putting]). But state-level polling painted a different and ultimately much more inaccurate
+picture of the race. 
+
+MRP is a promising alternative that avoids the uncertain rigour of state polls and the prescience needed to predict where polls will be conducted.Instead, in this analysis, MRP relies on survey data at the national level, combined with statistical models and census data, to generate estimates of voter turnout and candidate selection at the state level.This approach utilizes MRP to provide highly accurate estimates of attitudes and behavior at the state level, even though the number of observations in each state is relatively small.
+
+
+The statistical nature and substantial advantages of MRP can be found in papers(@park2004bayesian; @ghitza2013deep).The researchers started with a national survey data set, preferably with quite a few observations.Using basic demographic variables available in the state (or other subnational) level census data, multilevel statistical models can be used to predict outcomes of interest.Other state-level variables can be included in the model to improve the accuracy of the estimates.The coefficients of continuous variables are usually unmodeled (that is, fixed), while group variables are modeled as classified random effects.In the case of election preference estimation, multiple models are required, first estimating the probability of voting, then additional models estimating the preference of the candidate.
+
+
+In the second stage of MRP analysis, the model estimates are used to predict the outcome
+variable for groups defined in a poststratification dataset. This dataset has an observation
+corresponding to each group defined for all combinations of the demographic variables included
+in the model. After predicting the outcome variable for each of the groups in the poststratification dataset, estimates can be aggregated to the state level, with the subgroup population sizes determining the relative weight of each group’s estimate in the state-level estimate.
+
+MRP provides a powerful way to generate opinion estimates at the state level by pooling information from similar groups in other states, in effect exploiting the homogeneity of attitudes at the subgroup level (as established in regression analysis).Through multi-level modeling, the results between multiple groups are partially aggregated.
+
+First, we use naive bayes to fit a model.
+Assuming our  survey sample 
+
+$(x_1^{(1)}, x_2^{(1)}, \ldots x_n^{(1)}, y_1);(x_1^{(2)}, x_2^{(2)}, \ldots x_n^{(2)},y_2), \ldots;(x_1^{(m)}, x_2^{(m)}, \ldots x_n^{(m)}, y_m)$.
+There are 2 categories of feature outputs, defined as ${C_1,C_2}$, which denotes to vote Trump or Biden. From the sample we can learn the prior distribution of naive Bayes $P(Y=C_k)(k=1,2,...K)$. And then we learned about conditional probability distributions$P(X=x|Y=C_k) = P(X_1=x_1, X_2=x_2,...X_n=x_n|Y=C_k)$.The joint distribution P(X,Y) is defined as
+
+\begin{align} P(X,Y=C_k) &= P(Y=C_k)P(X=x|Y=C_k) \\&P(Y=C_k)P(X_1=x_1, X_2=x_2,...X_n=x_n|Y=C_k) \end{align}
+
+Then $$P(X_1=x_1, X_2=x_2,...X_n=x_n|Y=C_k) = P(X_1=x_1|Y=C_k)P(X_2=x_2|Y=C_k)...P(X_n=x_n|Y=C_k)$$
+
+Since it's a Bayesian model, it's certainly a posteriori probability maximization to determine the classification. We just need to calculate all K conditional probabilities $P(Y=C_k|X=X^{(test)})$, and then find the category corresponding to the largest conditional probability, which is the naive bayes' prediction.
+
+# Results
+
+Here’s what the model output looks like:
+```{r,echo=FALSE}
+Naive_Bayes_Model = naiveBayes(vote.2 ~., data=survey.na_omit)
+
+Naive_Bayes_Model
+
+# Prediction on the dataset
+NB_Predictions = predict(Naive_Bayes_Model,
+                         as.matrix(post_stra),
+                         type = "raw") # type="class" or "raw"
+
+```
+Here’s what the predicted probability of voting for Trump looks for the first ten test cases:
+```{r}
+NB_Predictions[,1][1:10]
+
+```
+Below, we specify and train a logistic regression model using `glm()` and evaluate the predictions.
+
+```{r,echo=FALSE}
+survey.logit <- survey.na_omit %>% 
+  mutate(vote.2.binary = ifelse(vote.2=="Trump",1,0))
+
+fit <- glm(vote.2.binary ~ . ,
+           survey.logit %>% as.data.frame() %>% select(-vote.2),
+           family=binomial(link='logit'))
+summary(fit)
+```
+
+
+
+
+# Discussion
+
+While higher-quality polling in swing states likely would have improved predictions in
+the 2020 election, MRP provides an attractive alternative. As this paper demonstrates, even with
+relatively small state-level sample sizes, our MRP approach substantially outperforms leading polling aggregators in the 2020 election, and analyses of previous elections indicate the
+robustness of the technique.
+
+
+This performance is likely related to factors including the quality of the underlying data
+and attributes specific to our approach. First, by using a single national-level survey, our MRP
+estimates are based on data collected with the same methods across states, while state-level
+surveys averaged by aggregators vary widely in methods and quality. To the extent that lowerquality or poorly devised polling methods produce inaccurate estimates, the presumed cancelingout benefits of aggregation can lead to biased and misleading results. Second, and relatedly, the
+analysis reported here is based on one of the most methodologically sound probability-based
+RDD surveys of its type in the country. These data may present advantages over
+non-probability data or voter registration lists; the latter suffer from sizable noncoverage and
+noisy weighting variables.
+
+MRP also offers an alternative to traditional survey weighting and likely voter modeling
+that overcomes some of the challenges faced by standard survey weighting techniques – either iterative proportional fitting, which does not guarantee precise subgroup sizes, or
+cell weighting, which can be compromised by limited sample sizes. MRP is analogous in many
+ways to cell weighting, without the troubles associated with zero- or small-n cells. In the analysis
+presented here, the model estimates were poststratified on 10,200 cells, essentially a much finergrained weighting scheme than either rake or typical cell weighting
+
+Future research may lead to additional improvements in the accuracy of the MRP
+approach employed here. Other strategies for estimating turnout (e.g., other deterministic
+operationalizations, continuous turnout variables or CPS-based models) could enhance subgrouplevel turnout estimates. Future research also could examine whether and how to poststratify on
+variables such as partisan identification or past vote (Wang et al. 2014; YouGov 2016), albeit
+with an eye to the inherent risks of doing so. Finally, the analysis could be conducted using full
+Bayesian methods, which would facilitate the calculation of uncertainty for the estimates.
+
+
+
+\newpage
+
+
+# References
+
+
